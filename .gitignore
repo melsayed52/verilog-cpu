@@ -1,0 +1,15 @@
+# Vivado build artifacts
+.Xil/
+xsim.dir/
+.runs/
+.cache/
+.hw/
+.ip_user_files/
+*.jou
+*.log
+*.wdb
+*.pb
+
+# Temp / system files
+.DS_Store
+Thumbs.db
