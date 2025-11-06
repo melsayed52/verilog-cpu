@@ -10,6 +10,9 @@ module skidbuffer #(
   input                   clk,
   input                   rst_n,        // synchronous, active-low
 
+  // control
+  input                   flush_i,      // NEW: drop any buffered beat this cycle
+
   // upstream (producer -> skid)
   input                   valid_in,
   output                  ready_in,
@@ -36,14 +39,19 @@ module skidbuffer #(
       skid_valid <= 1'b0;
       skid_data  <= {DATA_WIDTH{1'b0}};
     end else begin
-      // release skidded beat once downstream is ready
-      if (ready_out)
+      // explicit flush wins
+      if (flush_i) begin
         skid_valid <= 1'b0;
+      end else begin
+        // release skidded beat once downstream is ready
+        if (ready_out)
+          skid_valid <= 1'b0;
 
-      // late stall capture
-      if (!ready_out && (skid_valid == 1'b0) && valid_in) begin
-        skid_valid <= 1'b1;
-        skid_data  <= data_in;
+        // late stall capture
+        if (!ready_out && (skid_valid == 1'b0) && valid_in) begin
+          skid_valid <= 1'b1;
+          skid_data  <= data_in;
+        end
       end
     end
   end

@@ -1,15 +1,29 @@
-# Vivado build artifacts
-.Xil/
-xsim.dir/
-.runs/
-.cache/
-.hw/
-.ip_user_files/
+# Vivado / xsim outputs
 *.jou
 *.log
-*.wdb
+*.str
 *.pb
+*.wcfg
+*.wdb
+*.xpr
+*.runs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+xsim.dir/
+*.dmp
+*.tmp
+*.data
+*.ini
 
-# Temp / system files
+# OS cruft
 .DS_Store
 Thumbs.db
+
+# VS Code
+.vscode/
+
+# Optional: if you keep the project as source-only
+*.xsa
+*.xsa.zip
