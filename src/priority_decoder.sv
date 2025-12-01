@@ -1,5 +1,13 @@
-// priority_decoder.sv
-// Priority encoder: lowest-index '1' wins.
+////////////////////////////////////////////////////////////////////////////////
+// Module: priority_decoder
+// Description: Priority encoder: lowest‑index '1' wins.  Given a WIDTH‑bit
+// input vector, the module outputs the index of the least significant set
+// bit along with a valid flag.  If no bits are set, valid=0 and out is
+// zero.
+////////////////////////////////////////////////////////////////////////////////
+
+`timescale 1ns/1ps
+
 module priority_decoder #(
   parameter WIDTH = 4
 ) (

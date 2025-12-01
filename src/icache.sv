@@ -1,14 +1,17 @@
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: icache
-// Description: Simple synchronous instruction memory (Phase 1)
-//   - Acts as ROM storing 32-bit instructions, one per row
-//   - Inferred as FPGA BRAM (1-cycle read latency)
-//   - Read-only: no write path
-// Additional Comments:
-//   - Parameterized depth (default 2 KB = 512 words)
-//   - Preload program using $readmemh("program.hex")
-//////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// Module: icache
+// Description: Simple synchronous instruction memory (Phase 1).
+//
+// The instruction cache acts as a ROM storing 32‑bit instructions, one per
+// word.  It is inferred as block RAM with a one cycle read latency.
+// The memory can be preloaded using $readmemh from INIT_FILE, or via a
+// +HEX=path plusarg at runtime.  If no file is found the memory is
+// initialised to NOPs.  After elaboration the module prints the first
+// few words for debugging.
+////////////////////////////////////////////////////////////////////////////////
+
 `timescale 1ns/1ps
+
 module icache #(
   parameter int     MEM_DEPTH = 512,                       // 2KB @ 4B/word
   parameter string  INIT_FILE = "../mem/program.hex"       // override from top/tb
@@ -38,7 +41,6 @@ module icache #(
   initial begin
     for (i = 0; i < MEM_DEPTH; i++) mem[i] = 32'h0000_0013; // NOP
     loaded = 1'b0;
-
     if (INIT_FILE.len() != 0) begin
       $display("ICACHE: trying INIT_FILE: %0s", INIT_FILE);
       fd = $fopen(INIT_FILE, "r");
@@ -51,7 +53,6 @@ module icache #(
         $display("ICACHE: INIT_FILE not found");
       end
     end
-
     if (!loaded && $value$plusargs("HEX=%s", hex_from_plusarg)) begin
       $display("ICACHE: trying +HEX: %0s", hex_from_plusarg);
       fd = $fopen(hex_from_plusarg, "r");
@@ -64,18 +65,14 @@ module icache #(
         $display("ICACHE: +HEX path not found");
       end
     end
-
     if (!loaded) $display("ICACHE: WARNING - no hex loaded; running with NOPs.");
-
-    // ---------- ADD THIS DEBUG DUMP (exact spot) ----------
     // Show the first few words so we know exactly what's in BRAM.
     for (i = 0; i < 12; i++) begin
       $display("ICACHE: mem[%0d] @ 0x%08x = %08x", i, i*4, mem[i]);
     end
-    // ------------------------------------------------------
   end
 
-  // Registered (1-cycle) read timing
+  // Registered (1‑cycle) read timing
   logic [31:2] index_q;
   logic        en_q;
 
@@ -88,6 +85,8 @@ module icache #(
     end else begin
       index_q <= index;
       en_q    <= en;
-
-      rdata   <= mem[index_q]; // prior-cycle address phase
-      rvalid  <= en_q;         // prior-cycle enable
+      rdata   <= mem[index_q]; // prior‑cycle address phase
+      rvalid  <= en_q;         // prior‑cycle enable
+    end
+  end
+endmodule

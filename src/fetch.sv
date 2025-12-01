@@ -1,14 +1,18 @@
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: fetch
-// Description: Single-instruction fetch stage (Phase 1)
-//   - Fetches one 32-bit instruction from i-cache per cycle
-//   - Increments PC by +4 on each accepted instruction
-//   - Holds output if downstream not ready
-// Additional Comments:
-//   - Word-aligned (PC[1:0] == 2'b00)
-//   - No branch prediction or BTB yet
-//////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// Module: fetch
+// Description: Single‑instruction fetch stage (Phase 1).
+//
+// This fetch unit retrieves one 32‑bit instruction per cycle from the
+// instruction cache.  It increments the program counter by 4 on each
+// accepted instruction and holds the output when downstream is not ready.
+// Branch prediction is not yet implemented; a redirect input allows the
+// decode/branch unit to jump to a new PC (e.g. for JALR).  Word‑aligned
+// addressing is assumed (PC[1:0] == 2'b00).  The instruction cache has
+// one cycle of latency.
+////////////////////////////////////////////////////////////////////////////////
+
 `timescale 1ns/1ps
+
 module fetch #(
   parameter logic [31:0] PC_RESET = 32'h0000_0000
 )(
@@ -19,9 +23,9 @@ module fetch #(
   input  logic        pc_redir_valid,
   input  logic [31:0] pc_redir_target,
 
-  // i-cache interface (1-cycle latency)
+  // i‑cache interface (1‑cycle latency)
   output logic [31:2] icache_index,   // word index = PC[31:2]
-  output logic        icache_en,      // read enable (one-shot)
+  output logic        icache_en,      // read enable (one‑shot)
   input  logic [31:0] icache_rdata,   // returned instruction
   input  logic        icache_rvalid,  // valid in cycle after en
 
@@ -43,7 +47,7 @@ module fetch #(
   assign instr = instr_reg;
   assign valid = valid_reg;
 
-  // i-cache command
+  // i‑cache command
   always_comb begin
     // Only issue when we don't hold a valid instr and not waiting on a return
     icache_en    = (!valid_reg) && (!req_outstanding);
@@ -68,13 +72,11 @@ module fetch #(
         if ((!valid_reg) && (!req_outstanding)) begin
           req_outstanding <= 1'b1;   // we just issued a read (icache_en=1 in comb)
         end
-
         if (icache_rvalid) begin
           instr_reg       <= icache_rdata;
           valid_reg       <= 1'b1;
           req_outstanding <= 1'b0;
         end
-
         if (valid_reg && ready) begin
           pc_reg    <= pc_reg + 32'd4;
           valid_reg <= 1'b0;
@@ -83,5 +85,4 @@ module fetch #(
       end
     end
   end
-
 endmodule

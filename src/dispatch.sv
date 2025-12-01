@@ -57,7 +57,26 @@ module dispatch (
   output logic [ROB_TAG_W-1:0] rob_commit_tag_o,
   output logic                 rob_commit_rd_used_o,
   output logic [PREG_W-1:0]    rob_commit_dest_new_o,
-  output logic [PREG_W-1:0]    rob_commit_dest_old_o
+  output logic [PREG_W-1:0]    rob_commit_dest_old_o,
+
+  // NEW: PRF read interfaces for FUs
+  // ALU
+  input  logic [PREG_W-1:0]    alu_prf_rs1_tag_i,
+  input  logic [PREG_W-1:0]    alu_prf_rs2_tag_i,
+  output logic [XLEN-1:0]      alu_prf_rs1_data_o,
+  output logic [XLEN-1:0]      alu_prf_rs2_data_o,
+
+  // LSU
+  input  logic [PREG_W-1:0]    lsu_prf_rs1_tag_i,
+  input  logic [PREG_W-1:0]    lsu_prf_rs2_tag_i,
+  output logic [XLEN-1:0]      lsu_prf_rs1_data_o,
+  output logic [XLEN-1:0]      lsu_prf_rs2_data_o,
+
+  // BRU
+  input  logic [PREG_W-1:0]    bru_prf_rs1_tag_i,
+  input  logic [PREG_W-1:0]    bru_prf_rs2_tag_i,
+  output logic [XLEN-1:0]      bru_prf_rs1_data_o,
+  output logic [XLEN-1:0]      bru_prf_rs2_data_o
 );
 
   // Width of rename packet for skidbuffer
@@ -88,13 +107,35 @@ module dispatch (
   rename_pkt_t buf_pkt;
   assign buf_pkt = rename_pkt_t'(buf_bus_out);
 
-  // -----------------------
+    // -----------------------
   // Physical register file
   // -----------------------
+  localparam int PRF_NUM_READ = 6;
+
   logic prf_inv_valid;
   logic [PREG_W-1:0] prf_inv_tag;
 
-  prf #(.NUM_READ(4)) i_prf (
+  // Flattened PRF read buses
+  logic [PRF_NUM_READ*PREG_W-1:0] prf_rtag;
+  logic [PRF_NUM_READ*XLEN-1:0]   prf_rdata;
+
+  // Map FU tags into PRF read tag bus
+  assign prf_rtag[0*PREG_W +: PREG_W] = alu_prf_rs1_tag_i;
+  assign prf_rtag[1*PREG_W +: PREG_W] = alu_prf_rs2_tag_i;
+  assign prf_rtag[2*PREG_W +: PREG_W] = lsu_prf_rs1_tag_i;
+  assign prf_rtag[3*PREG_W +: PREG_W] = lsu_prf_rs2_tag_i;
+  assign prf_rtag[4*PREG_W +: PREG_W] = bru_prf_rs1_tag_i;
+  assign prf_rtag[5*PREG_W +: PREG_W] = bru_prf_rs2_tag_i;
+
+  // Map PRF read data back to FUs
+  assign alu_prf_rs1_data_o = prf_rdata[0*XLEN +: XLEN];
+  assign alu_prf_rs2_data_o = prf_rdata[1*XLEN +: XLEN];
+  assign lsu_prf_rs1_data_o = prf_rdata[2*XLEN +: XLEN];
+  assign lsu_prf_rs2_data_o = prf_rdata[3*XLEN +: XLEN];
+  assign bru_prf_rs1_data_o = prf_rdata[4*XLEN +: XLEN];
+  assign bru_prf_rs2_data_o = prf_rdata[5*XLEN +: XLEN];
+
+  prf #(.NUM_READ(PRF_NUM_READ)) i_prf (
     .clk         (clk),
     .rst_n       (rst_n),
     .inv_valid_i (prf_inv_valid),
@@ -102,8 +143,8 @@ module dispatch (
     .wb_valid_i  (cdb_valid_i),
     .wb_tag_i    (cdb_tag_i),
     .wb_data_i   (cdb_data_i),
-    .rtag_i      ('0),
-    .rdata_o     (),
+    .rtag_i      (prf_rtag),
+    .rdata_o     (prf_rdata),
     .valid_o     (prf_valid_o)
   );
 

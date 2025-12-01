@@ -1,12 +1,23 @@
-// fifo.sv - circular-buffer FIFO, registered read, doc-compliant interface
+////////////////////////////////////////////////////////////////////////////////
+// Module: fifo
+// Description: Circular‑buffer FIFO with registered read.  The FIFO depth
+// is parameterised; a DEPTH of 1 effectively becomes a single register.
+// The interface provides write_en and read_en signals, along with full
+// and empty flags.  The read_data is registered, meaning that the data
+// becomes valid on the cycle following a read_en.  This design follows
+// common FIFO coding styles and uses a two‑port memory with write and
+// read pointers.
+////////////////////////////////////////////////////////////////////////////////
+
 `timescale 1ns/1ps
+
 module fifo #(
   parameter type T = logic [31:0],
   parameter int  DEPTH = 8,
   localparam int PTR_W = (DEPTH <= 1) ? 1 : $clog2(DEPTH)
 )(
   input  logic clk,
-  input  logic reset,          // active-high synchronous reset
+  input  logic reset,          // active‑high synchronous reset
 
   input  logic write_en,
   input  T     write_data,
