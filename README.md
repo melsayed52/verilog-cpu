@@ -4,22 +4,6 @@ This repository contains my complete implementation of the class Out-of-Order CP
 
 All code is written in **SystemVerilog** (with a few legacy Verilog files kept for reference).
 
----
-
-# Repository Structure
-
-/src
-├── *.sv ← Phase 3 design sources (top_phase3 and all RTL)
-├── extra/ ← Legacy Phase 1 / Phase 2 tops & unused helpers
-├── mem/ ← program.hex / data.hex used by testbenches
-/tb
-├── tb_top_phase0.sv ← (optional) older testbenches
-├── tb_top_phase2.sv ← Phase 2 top-level testbench
-├── tb_top_phase3.sv ← Phase 3 full-pipeline testbench
-├── extra/ ← Unit tests / experimental benches 
-
-
-
 All modules required to compile and run **Phase 3** are placed directly under `src/` for simplicity.  
 Older or unused files are moved under `src/extra/` to keep the project readable.
 
