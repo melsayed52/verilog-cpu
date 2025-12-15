@@ -1,0 +1,16 @@
+# PHASE 1 — simple ALU
+
+0:  00500293    addi x5  x0  5
+4:  00700313    addi x6  x0  7
+8:  0062f3b3    and  x7  x5  x6
+c:  406283b3    sub  x7  x5  x6
+10: 4003be13    sltiu x28 x7 1024
+
+14: 00038513    addi x10 x7  0      # a0 = x7
+18: 000e0593    addi x11 x28 0      # a1 = x28
+
+#end
+
+# (Values are in signed decimal)
+# a0 = -2
+# a1 = 0

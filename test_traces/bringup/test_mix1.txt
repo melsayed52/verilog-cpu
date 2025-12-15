@@ -1,0 +1,40 @@
+# FULL MIXED TEST (no branch, no negative offsets, no jalr, no sh)
+# Covers: lui, addi, ori, and, sub, sra, sltiu, sw, lw, lbu
+# a0 = x10, a1 = x11
+
+0:   00010437    lui  x8  0x10
+4:   04040413    addi x8  x8  64
+
+8:   123452b7    lui  x5  0x12345
+c:   6782e293    ori  x5  x5  1656
+
+10:  00abc337    lui  x6  0xabc
+14:  def36313    ori  x6  x6  -529
+
+18:  0062f3b3    and  x7  x5  x6
+1c:  40628e33    sub  x28 x5  x6
+20:  00d00f13    addi x30 x0  13
+24:  41ee5eb3    sra  x29 x28 x30
+28:  400ebf93    sltiu x31 x29 1024
+
+2c:  00542023    sw   x5  0  x8
+30:  00642223    sw   x6  4  x8
+34:  00742623    sw   x7  12 x8
+
+38:  00c42b83    lw   x23 12 x8
+3c:  00442c03    lw   x24 4  x8
+
+40:  00044c83    lbu  x25 0  x8
+44:  00144d03    lbu  x26 1  x8
+
+48:  01deedb3    and  x27 x23 x29
+4c:  41de8a33    sub  x20 x27 x29
+50:  019a05b3    add  x11 x20 x25
+
+54:  000d0513    addi x10 x26 0
+
+#end
+
+# (Values are in signed decimal)
+# a0 = 86
+# a1 = -34700

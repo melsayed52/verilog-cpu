@@ -1,198 +1,159 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: lsu_fu
-// Description: Load/store unit functional block (Phase 3: loads only).
-//              Accepts issued memory operations from the LSU reservation
-//              station, computes the effective address using rs1 (+ rs2 or
-//              immediate), performs a load through dmem, and produces
-//              writeback and ROB completion signals.
+// Description: LSU FU (phase 3/4) using BRAM-style DMEM ports (2-cycle latency).
 // Additional Comments:
-//   - Uses issue_pkt_t fields: rs1_tag, rs2_tag, rd_tag, rd_used, imm,
-//     imm_used, is_load, is_store, ls_size, unsigned_load, rob_tag.
-//   - Stores are ignored in Phase 3 (can be added later).
-//
+//   - FIX: flush hazard protection for 2-cycle memory:
+//       after flush_i, block new issues for 2 cycles and ignore responses
+//       during the block, preventing old responses from pairing with new metadata.
 //////////////////////////////////////////////////////////////////////////////////
 
 `timescale 1ns/1ps
-
 `include "ooop_defs.vh"
 `include "ooop_types.sv"
 
-module lsu_fu #(
-  parameter int XLEN_P = XLEN
-)(
-  input  logic                 clk,
-  input  logic                 rst_n,
-  input  logic                 flush_i,
+module lsu_fu (
+  input  logic                  clk,
+  input  logic                  rst_n,
+  input  logic                  flush_i,
 
-  // From LSU reservation station
-  input  logic                 issue_valid_i,
-  output logic                 issue_ready_o,
-  input  issue_pkt_t           issue_pkt_i,
+  input  logic                  issue_valid_i,
+  input  ooop_types::rs_entry_t  entry_i,
+  input  ooop_types::xlen_t      src1_i,
+  input  ooop_types::xlen_t      src2_i,
 
-  // PRF combinational read ports (typically only rs1 is needed)
-  output logic [PREG_W-1:0]    prf_rs1_tag_o,
-  output logic [PREG_W-1:0]    prf_rs2_tag_o,
-  input  logic [XLEN_P-1:0]    prf_rs1_data_i,
-  input  logic [XLEN_P-1:0]    prf_rs2_data_i,
+  output logic                  dmem_en_o,
+  output logic                  dmem_we_o,
+  output logic [31:0]           dmem_addr_o,
+  output logic [31:0]           dmem_wdata_o,
+  output ooop_types::ls_size_t  dmem_size_o,
 
-  // Interface to data memory
-  output logic                 dmem_req_valid_o,
-  output logic [31:0]          dmem_addr_o,
-  input  logic [XLEN_P-1:0]    dmem_rdata_i,
-  input  logic                 dmem_rvalid_i,
+  input  logic                  dmem_rvalid_i,
+  input  logic [31:0]           dmem_rdata_i,
 
-  // Writeback to CDB / PRF
-  output logic                 wb_valid_o,
-  output logic [PREG_W-1:0]    wb_tag_o,
-  output logic [XLEN_P-1:0]    wb_data_o,
-
-  // Completion to ROB
-  output logic                 cpl_valid_o,
-  output logic [ROB_TAG_W-1:0] cpl_tag_o
+  output ooop_types::wb_pkt_t   wb_o
 );
 
-  // ---------------------------------------------------------------------------
-  // PRF read tags
-  // ---------------------------------------------------------------------------
-  assign prf_rs1_tag_o = issue_pkt_i.rs1_tag;
-  assign prf_rs2_tag_o = issue_pkt_i.rs2_tag;
+  import ooop_types::*;
 
-  // ---------------------------------------------------------------------------
-  // Simple 2-state FSM: IDLE -> WAIT_MEM
-  // ---------------------------------------------------------------------------
-  typedef enum logic [1:0] {LSU_IDLE, LSU_WAIT_MEM} lsu_state_e;
+  // 2-cycle post-flush block window
+  logic [1:0] block_cnt;
 
-  lsu_state_e        state_q, state_d;
-  issue_pkt_t        pkt_q;
-  logic [XLEN_P-1:0] addr_q;
-  logic [XLEN_P-1:0] load_data_q;
-
-  // Can accept a new issue only when idle
-  assign issue_ready_o = (state_q == LSU_IDLE);
-
-  // Effective address (combinational) for the current issue
-  logic [XLEN_P-1:0] eff_addr_d;
-
-  always_comb begin
-    // base = rs1; offset can be imm or rs2
-    logic [XLEN_P-1:0] offset;
-    offset     = issue_pkt_i.imm_used ? issue_pkt_i.imm : prf_rs2_data_i;
-    eff_addr_d = prf_rs1_data_i + offset;
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      block_cnt <= 2'd0;
+    end else begin
+      if (flush_i) begin
+        block_cnt <= 2'd2;
+      end else if (block_cnt != 2'd0) begin
+        block_cnt <= block_cnt - 2'd1;
+      end
+    end
   end
 
-  // Memory request generation: fire when we accept an LSU issue
-  assign dmem_req_valid_o = issue_valid_i && issue_ready_o && issue_pkt_i.is_load;
-  assign dmem_addr_o      = eff_addr_d[31:0];
+  wire allow_issue = (block_cnt == 2'd0) && !flush_i;
 
-  // FSM next-state logic
-  always_comb begin
-    state_d = state_q;
+  logic [31:0] eff_addr;
+  assign eff_addr = src1_i + entry_i.imm;
 
-    unique case (state_q)
-      LSU_IDLE: begin
-        if (issue_valid_i && issue_ready_o && issue_pkt_i.is_load) begin
-          state_d = LSU_WAIT_MEM;
-        end
+  // suppress requests during block
+  assign dmem_en_o    = issue_valid_i && allow_issue;
+  assign dmem_we_o    = entry_i.is_store;
+  assign dmem_addr_o  = eff_addr;
+  assign dmem_wdata_o = src2_i;
+  assign dmem_size_o  = entry_i.ls_size;
+
+  typedef struct packed {
+    logic              v;
+    logic              is_load;
+    logic              rd_used;
+    logic [ROB_W-1:0]  rob_tag;
+    logic [PREG_W-1:0] prd;
+    ls_size_t          size;
+    logic              uns;
+    logic [1:0]        off;
+  } meta_t;
+
+  meta_t m0_q, m1_q;
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      m0_q <= '0;
+      m1_q <= '0;
+    end else if (flush_i) begin
+      m0_q <= '0;
+      m1_q <= '0;
+    end else begin
+      // stage0 capture only when allowed
+      m0_q.v <= issue_valid_i && allow_issue;
+      if (issue_valid_i && allow_issue) begin
+        m0_q.is_load <= entry_i.is_load;
+        m0_q.rd_used <= entry_i.rd_used;
+        m0_q.rob_tag <= entry_i.rob_tag;
+        m0_q.prd     <= entry_i.prd;
+        m0_q.size    <= entry_i.ls_size;
+        m0_q.uns     <= entry_i.unsigned_load;
+        m0_q.off     <= eff_addr[1:0];
+      end else begin
+        m0_q.is_load <= 1'b0;
+        m0_q.rd_used <= 1'b0;
+        m0_q.rob_tag <= '0;
+        m0_q.prd     <= '0;
+        m0_q.size    <= LS_W;
+        m0_q.uns     <= 1'b0;
+        m0_q.off     <= 2'd0;
       end
 
-      LSU_WAIT_MEM: begin
-        if (dmem_rvalid_i) begin
-          state_d = LSU_IDLE;
-        end
+      // stage1 shift
+      m1_q <= m0_q;
+    end
+  end
+
+  logic [31:0] load_res;
+
+  always @* begin
+    load_res = dmem_rdata_i;
+
+    unique case (m1_q.size)
+      LS_B: begin
+        logic [7:0] b;
+        unique case (m1_q.off)
+          2'd0: b = dmem_rdata_i[7:0];
+          2'd1: b = dmem_rdata_i[15:8];
+          2'd2: b = dmem_rdata_i[23:16];
+          default: b = dmem_rdata_i[31:24];
+        endcase
+        load_res = m1_q.uns ? {24'd0, b} : {{24{b[7]}}, b};
       end
 
-      default: state_d = LSU_IDLE;
+      LS_H: begin
+        logic [15:0] h;
+        h = m1_q.off[1] ? dmem_rdata_i[31:16] : dmem_rdata_i[15:0];
+        load_res = m1_q.uns ? {16'd0, h} : {{16{h[15]}}, h};
+      end
+
+      default: begin
+        load_res = dmem_rdata_i;
+      end
     endcase
   end
 
-  // Sequential state + packet/addr capturing
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      state_q      <= LSU_IDLE;
-      pkt_q        <= '0;
-      addr_q       <= '0;
-      load_data_q  <= '0;
-    end else if (flush_i) begin
-      state_q      <= LSU_IDLE;
-      pkt_q        <= '0;
-    end else begin
-      state_q <= state_d;
+  always @* begin
+    wb_o = '0;
 
-      if (issue_valid_i && issue_ready_o && issue_pkt_i.is_load) begin
-        pkt_q  <= issue_pkt_i;
-        addr_q <= eff_addr_d;
-      end
+    if (dmem_rvalid_i && m1_q.v && (block_cnt == 2'd0) && !flush_i) begin
+      wb_o.valid   = 1'b1;
+      wb_o.rob_tag = m1_q.rob_tag;
 
-      if ((state_q == LSU_WAIT_MEM) && dmem_rvalid_i) begin
-        // Data formatting is handled below; store formatted value
-        // into load_data_q.
-        load_data_q <= format_load(dmem_rdata_i, addr_q[1:0],
-                                   pkt_q.ls_size, pkt_q.unsigned_load);
+      if (m1_q.is_load && m1_q.rd_used) begin
+        wb_o.rd_used = 1'b1;
+        wb_o.prd     = m1_q.prd;
+        wb_o.data    = load_res;
+      end else begin
+        wb_o.rd_used = 1'b0;
+        wb_o.prd     = '0;
+        wb_o.data    = 32'd0;
       end
     end
   end
-
-  // ---------------------------------------------------------------------------
-  // Load-format helper function: byte/halfword/word + sign/zero extend
-  // ---------------------------------------------------------------------------
-  function automatic logic [XLEN_P-1:0] format_load(
-    input logic [XLEN_P-1:0] raw,
-    input logic [1:0]        addr_low,
-    input logic [1:0]        ls_size,
-    input logic              unsigned_load
-  );
-    logic [XLEN_P-1:0] result;
-    logic [7:0]  byte_lane;
-    logic [15:0] half_lane;
-
-    begin
-      // Select byte/halfword based on low address bits
-      case (ls_size)
-        2'b00: begin
-          // Byte
-          case (addr_low)
-            2'b00: byte_lane = raw[7:0];
-            2'b01: byte_lane = raw[15:8];
-            2'b10: byte_lane = raw[23:16];
-            default: byte_lane = raw[31:24];
-          endcase
-          result = unsigned_load
-            ? {{(XLEN_P-8){1'b0}}, byte_lane}
-            : {{(XLEN_P-8){byte_lane[7]}}, byte_lane};
-        end
-
-        2'b01: begin
-          // Halfword
-          case (addr_low[1])
-            1'b0: half_lane = raw[15:0];
-            1'b1: half_lane = raw[31:16];
-          endcase
-          result = unsigned_load
-            ? {{(XLEN_P-16){1'b0}}, half_lane}
-            : {{(XLEN_P-16){half_lane[15]}}, half_lane};
-        end
-
-        default: begin
-          // Word (assume aligned)
-          result = raw;
-        end
-      endcase
-
-      format_load = result;
-    end
-  endfunction
-
-  // ---------------------------------------------------------------------------
-  // Writeback + completion
-  // ---------------------------------------------------------------------------
-  logic load_fire;
-  assign load_fire = (state_q == LSU_WAIT_MEM) && dmem_rvalid_i;
-
-  assign wb_valid_o  = load_fire && pkt_q.rd_used;
-  assign wb_tag_o    = pkt_q.rd_tag;
-  assign wb_data_o   = load_data_q;
-
-  assign cpl_valid_o = load_fire;
-  assign cpl_tag_o   = pkt_q.rob_tag;
 
 endmodule

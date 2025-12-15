@@ -1,211 +1,197 @@
-////////////////////////////////////////////////////////////////////////////////
-// Module: rename
-// Description: Simple register renaming stage.
-//
-// This rename implementation performs architectural to physical register
-// renaming with a single entry of buffering.  When a new instruction
-// arrives, the RAT table is consulted to find the physical tags for rs1 and
-// rs2.  A new physical tag for the destination is allocated from an
-// internal counter; the old tag for rd is captured.  Readiness of each
-// source operand is determined by looking up the validity bit in the
-// physical register file (provided as the prf_valid vector).  The module
-// updates the RAT immediately when rd is used.  When the downstream
-// dispatch is unable to accept an instruction (ready_in = 0) the current
-// rename result is held in a register until it is consumed.
-//
-// NOTE: This simplified rename does not implement a freelist – it
-// allocates physical tags sequentially from N_ARCH_REGS upwards and does
-// not reclaim them.  For short traces this suffices; a real design would
-// integrate a freelist and use commit signals to recycle tags.
-////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////
+// Module Name: rename
+// Description: Rename stage (Phase 4).
+// Additional Comments:
+//   - FIX: tag allocation is collision-robust via external rob_tag_alloc.
+//   - FIX: ready_out is gated by both free-reg availability and tag availability.
+//   - Option A: rob_tag is provided as an input (rob_tag_i) from core_top.
+//////////////////////////////////////////////////////////////////////////////////
 
 `timescale 1ns/1ps
-
 `include "ooop_defs.vh"
+`include "ooop_types.sv"
 
 module rename #(
-  parameter XLEN_P      = XLEN,
-  parameter PREG_W_P    = PREG_W,
-  parameter ROB_TAG_W_P = ROB_TAG_W
+  parameter int N_ARCH_REGS = ooop_types::N_ARCH_REGS,
+  parameter int N_PHYS_REGS = ooop_types::N_PHYS_REGS,
+  parameter int ROB_DEPTH   = ooop_types::ROB_DEPTH
 )(
-  input                       clk,
-  input                       rst_n,
+  input  logic                   clk,
+  input  logic                   rst_n,
 
-  input                       valid_in,
-  output                      ready_out,
+  input  logic                   flush_i,
 
-  input      [31:0]           pc_in,
-  input      [4:0]            rs1_arch,
-  input      [4:0]            rs2_arch,
-  input      [4:0]            rd_arch,
+  input  logic                   recover_i,
+  input  logic [ooop_types::ROB_W-1:0] recover_tag_i,
 
-  input      [XLEN_P-1:0]     imm_in,
-  input                       imm_used_in,
-  input      [1:0]            fu_type_in,
-  input      [3:0]            alu_op_in,
-  input                       rd_used_in,
-  input                       is_load_in,
-  input                       is_store_in,
-  input      [1:0]            ls_size_in,
-  input                       unsigned_load_in,
-  input                       is_branch_in,
-  input                       is_jump_in,
+  // from decode
+  input  logic                   valid_in,
+  output logic                   ready_out,
+  input  ooop_types::decode_pkt_t pkt_in,
 
-  // Physical register validity (from PRF) for readiness
-  input      [N_PHYS_REGS-1:0] prf_valid,
+  // to dispatch
+  output logic                   valid_out,
+  input  logic                   ready_in,
+  output ooop_types::rename_pkt_t pkt_out,
 
-  output                      valid_out,
-  input                       ready_in,
+  // PRF ready bits
+  input  logic [N_PHYS_REGS-1:0] prf_valid_i,
 
-  output reg [31:0]           pc_out,
-  output reg [1:0]            fu_type_out,
-  output reg [3:0]            alu_op_out,
-  output reg [XLEN_P-1:0]     imm_out,
-  output reg                  imm_used_out,
-  output reg                  is_load_out,
-  output reg                  is_store_out,
-  output reg [1:0]            ls_size_out,
-  output reg                  unsigned_load_out,
-  output reg                  is_branch_out,
-  output reg                  is_jump_out,
+  // free from ROB commit
+  input  logic                   free_req_i,
+  input  logic [ooop_types::PREG_W-1:0] free_preg_i,
 
-  output reg [ROB_TAG_W_P-1:0] rob_tag_out,
+  // invalidate newly allocated PRD in PRF
+  output logic                   alloc_inval_o,
+  output logic [ooop_types::PREG_W-1:0] alloc_preg_o,
 
-  output reg [PREG_W_P-1:0]   rs1_tag_out,
-  output reg                  rs1_ready_out,
-  output reg [PREG_W_P-1:0]   rs2_tag_out,
-  output reg                  rs2_ready_out,
+  // checkpoint broadcast
+  output logic                   checkpoint_take_o,
+  output logic [ooop_types::ROB_W-1:0] checkpoint_tag_o,
 
-  output reg                  rd_used_out,
-  output reg [PREG_W_P-1:0]   rd_new_tag_out,
-  output reg [PREG_W_P-1:0]   rd_old_tag_out
+  // NEW: tag allocator status and selected tag from core_top
+  input  logic                   tag_ok_i,
+  input  logic [ooop_types::ROB_W-1:0] rob_tag_i
 );
 
-  // Register alias table: maps architectural regs to physical tags
-  reg [PREG_W_P-1:0] rat_table [0:N_ARCH_REGS-1];
-  // Next physical tag to allocate; simple counter starting at N_ARCH_REGS
-  reg [PREG_W_P-1:0] next_tag;
+  import ooop_types::*;
 
-  // Output valid flag and buffered fields
-  reg                out_valid;
-  reg [31:0]         pc_buf;
-  reg [1:0]          fu_type_buf;
-  reg [3:0]          alu_op_buf;
-  reg [XLEN_P-1:0]   imm_buf;
-  reg                imm_used_buf;
-  reg                is_load_buf;
-  reg                is_store_buf;
-  reg [1:0]          ls_size_buf;
-  reg                unsigned_load_buf;
-  reg                is_branch_buf;
-  reg                is_jump_buf;
-  reg [ROB_TAG_W_P-1:0] rob_tag_buf;
-  reg [PREG_W_P-1:0] rs1_tag_buf;
-  reg                rs1_ready_buf;
-  reg [PREG_W_P-1:0] rs2_tag_buf;
-  reg                rs2_ready_buf;
-  reg                rd_used_buf;
-  reg [PREG_W_P-1:0] rd_new_tag_buf;
-  reg [PREG_W_P-1:0] rd_old_tag_buf;
+  localparam int PHYS_W = $clog2(N_PHYS_REGS);
 
-  assign valid_out = out_valid;
+  // RAT lookups
+  logic [PHYS_W-1:0] rs1_phys, rs2_phys, rd_old_phys;
 
-  // Compute when we can accept a new instruction.  We can accept when
-  // (1) there is no buffered output, or (2) the current output is being
-  // consumed by downstream this cycle (ready_in=1).  We ignore tag pool
-  // exhaustion for this simplified design.
-  assign ready_out = (!out_valid) || (out_valid && ready_in);
+  // free list alloc
+  logic              alloc_req;
+  logic              alloc_gnt;
+  logic [PHYS_W-1:0] alloc_preg;
+  logic              has_free;
 
-  integer i;
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      // Initialize RAT to identity mapping
-      for (i = 0; i < N_ARCH_REGS; i = i + 1) begin
-        rat_table[i] <= i[PREG_W_P-1:0];
-      end
-      next_tag   <= N_ARCH_REGS[PREG_W_P-1:0];
-      out_valid  <= 1'b0;
-    end else begin
-      // If the current output is valid and downstream is ready, drop it
-      if (out_valid && ready_in) begin
-        out_valid <= 1'b0;
-      end
-      // Accept a new instruction when ready_out and valid_in
-      if (valid_in && ready_out) begin
-        // Read source tags from RAT
-        reg [PREG_W_P-1:0] rs1_tag;
-        reg [PREG_W_P-1:0] rs2_tag;
-        reg [PREG_W_P-1:0] rd_old_tag;
-        rs1_tag   = rat_table[rs1_arch];
-        rs2_tag   = rat_table[rs2_arch];
-        rd_old_tag= rat_table[rd_arch];
-        // Determine readiness via prf_valid
-        reg rs1_ready;
-        reg rs2_ready;
-        if (rs1_arch == 5'd0) rs1_ready = 1'b1; else rs1_ready = prf_valid[rs1_tag];
-        if (rs2_arch == 5'd0) rs2_ready = 1'b1; else rs2_ready = prf_valid[rs2_tag];
-        // Allocate new dest tag if rd is used and not x0
-        reg [PREG_W_P-1:0] new_tag;
-        reg                dest_used;
-        if (rd_used_in && (rd_arch != 5'd0)) begin
-          new_tag   = next_tag;
-          dest_used = 1'b1;
-        end else begin
-          new_tag   = '0;
-          dest_used = 1'b0;
-        end
-        // Update RAT immediately for rd
-        if (dest_used) begin
-          rat_table[rd_arch] <= new_tag;
-          next_tag          <= next_tag + 1'b1;
-        end
-        // Buffer output fields
-        pc_buf            <= pc_in;
-        fu_type_buf       <= fu_type_in;
-        alu_op_buf        <= alu_op_in;
-        imm_buf           <= imm_in;
-        imm_used_buf      <= imm_used_in;
-        is_load_buf       <= is_load_in;
-        is_store_buf      <= is_store_in;
-        ls_size_buf       <= ls_size_in;
-        unsigned_load_buf <= unsigned_load_in;
-        is_branch_buf     <= is_branch_in;
-        is_jump_buf       <= is_jump_in;
-        rob_tag_buf       <= '0; // placeholder; actual tag allocated in dispatch
-        rs1_tag_buf       <= rs1_tag;
-        rs2_tag_buf       <= rs2_tag;
-        rs1_ready_buf     <= rs1_ready;
-        rs2_ready_buf     <= rs2_ready;
-        rd_used_buf       <= dest_used;
-        rd_new_tag_buf    <= new_tag;
-        rd_old_tag_buf    <= rd_old_tag;
-        // Mark output as valid
-        out_valid         <= 1'b1;
-      end
-    end
-  end
+  // need a dest allocation?
+  wire need_alloc = pkt_in.rd_used && (pkt_in.rd != '0);
 
-  // Drive outputs from buffered registers
-  always_comb begin
-    pc_out            = pc_buf;
-    fu_type_out       = fu_type_buf;
-    alu_op_out        = alu_op_buf;
-    imm_out           = imm_buf;
-    imm_used_out      = imm_used_buf;
-    is_load_out       = is_load_buf;
-    is_store_out      = is_store_buf;
-    ls_size_out       = ls_size_buf;
-    unsigned_load_out = unsigned_load_buf;
-    is_branch_out     = is_branch_buf;
-    is_jump_out       = is_jump_buf;
-    rob_tag_out       = rob_tag_buf;
-    rs1_tag_out       = rs1_tag_buf;
-    rs2_tag_out       = rs2_tag_buf;
-    rs1_ready_out     = rs1_ready_buf;
-    rs2_ready_out     = rs2_ready_buf;
-    rd_used_out       = rd_used_buf;
-    rd_new_tag_out    = rd_new_tag_buf;
-    rd_old_tag_out    = rd_old_tag_buf;
+  // gate on free preg and free tag
+  wire alloc_ok = (!need_alloc) || has_free;
+  wire tag_ok   = tag_ok_i;
+
+  // handshake
+  assign ready_out = ready_in && alloc_ok && tag_ok;
+  assign valid_out = valid_in && alloc_ok && tag_ok;
+  wire fire = valid_in && ready_out;
+
+  // request allocation only when instruction advances
+  assign alloc_req = fire && need_alloc;
+
+  // checkpoint on branch/jump only when instruction advances
+  wire checkpoint_take = fire && (pkt_in.is_branch || pkt_in.is_jump);
+  assign checkpoint_take_o = checkpoint_take;
+  assign checkpoint_tag_o  = rob_tag_i;
+
+  map_table #(
+    .N_ARCH_REGS(N_ARCH_REGS),
+    .N_PHYS_REGS(N_PHYS_REGS),
+    .ROB_DEPTH  (ROB_DEPTH)
+  ) mt0 (
+    .clk             (clk),
+    .rst_n           (rst_n),
+    .flush_i         (flush_i),
+
+    .recover_i       (recover_i),
+    .recover_tag_i   (recover_tag_i),
+
+    .rs1_arch        (pkt_in.rs1),
+    .rs2_arch        (pkt_in.rs2),
+    .rd_arch         (pkt_in.rd),
+
+    .rs1_phys        (rs1_phys),
+    .rs2_phys        (rs2_phys),
+    .rd_old_phys     (rd_old_phys),
+
+    .we              (alloc_gnt),
+    .we_arch         (pkt_in.rd),
+    .we_new_phys     (alloc_preg),
+
+    .checkpoint_take (checkpoint_take),
+    .checkpoint_tag  (rob_tag_i)
+  );
+
+  free_list_bitmap #(
+    .N_ARCH_REGS(N_ARCH_REGS),
+    .N_PHYS_REGS(N_PHYS_REGS),
+    .ROB_DEPTH  (ROB_DEPTH)
+  ) fl0 (
+    .clk             (clk),
+    .rst_n           (rst_n),
+    .flush_i         (flush_i),
+
+    .recover_i       (recover_i),
+    .recover_tag_i   (recover_tag_i),
+
+    .alloc_req       (alloc_req),
+    .alloc_gnt       (alloc_gnt),
+    .alloc_preg      (alloc_preg),
+    .has_free_o      (has_free),
+
+    .free_req        (free_req_i),
+    .free_preg       (free_preg_i),
+
+    .checkpoint_take (checkpoint_take),
+    .checkpoint_tag  (rob_tag_i),
+
+    .free_bitmap_o   ()
+  );
+
+  function automatic logic preg_ready(input logic [PHYS_W-1:0] p);
+    if (p == '0) preg_ready = 1'b1;
+    else         preg_ready = prf_valid_i[p];
+  endfunction
+
+  // PRF invalidation on successful dest alloc (except x0)
+  assign alloc_inval_o = alloc_gnt;
+  assign alloc_preg_o  = alloc_gnt ? alloc_preg : '0;
+
+  always @* begin
+    pkt_out = '0;
+
+    pkt_out.valid         = valid_out;
+
+    pkt_out.pc            = pkt_in.pc;
+    pkt_out.instr         = pkt_in.instr;
+
+    pkt_out.rs1           = pkt_in.rs1;
+    pkt_out.rs2           = pkt_in.rs2;
+    pkt_out.rd            = pkt_in.rd;
+
+    pkt_out.imm           = pkt_in.imm;
+    pkt_out.imm_used      = pkt_in.imm_used;
+
+    pkt_out.fu_type       = pkt_in.fu_type;
+    pkt_out.alu_op        = pkt_in.alu_op;
+
+    pkt_out.rd_used       = need_alloc;
+
+    pkt_out.is_load       = pkt_in.is_load;
+    pkt_out.is_store      = pkt_in.is_store;
+    pkt_out.ls_size       = pkt_in.ls_size;
+    pkt_out.unsigned_load = pkt_in.unsigned_load;
+
+    pkt_out.is_branch     = pkt_in.is_branch;
+    pkt_out.is_jump       = pkt_in.is_jump;
+    pkt_out.is_jalr       = pkt_in.is_jalr;
+
+    pkt_out.rs1_used      = pkt_in.rs1_used;
+    pkt_out.rs2_used      = pkt_in.rs2_used;
+
+    pkt_out.prs1          = rs1_phys;
+    pkt_out.prs2          = rs2_phys;
+
+    pkt_out.prs1_ready    = preg_ready(rs1_phys);
+    pkt_out.prs2_ready    = preg_ready(rs2_phys);
+
+    pkt_out.prd           = need_alloc ? alloc_preg  : '0;
+    pkt_out.old_prd       = need_alloc ? rd_old_phys : '0;
+
+    pkt_out.rob_tag       = rob_tag_i;
   end
 
 endmodule

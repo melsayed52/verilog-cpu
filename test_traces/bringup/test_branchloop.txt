@@ -1,0 +1,17 @@
+# PHASE 5 — branch loop (finite)
+
+0:  00000393    addi x7  x0  0
+4:  00400e13    addi x28 x0  4
+
+00000008 <loop>:
+8:  00138393    addi x7  x7  1
+c:  ffc39ee3    bne  x7  x28 -4 <loop>
+
+10: 00038513    addi x10 x7  0      # a0 = x7
+14: 000e0593    addi x11 x28 0      # a1 = x28
+
+#end
+
+# (Values are in signed decimal)
+# a0 = 4
+# a1 = 4

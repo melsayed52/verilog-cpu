@@ -1,0 +1,18 @@
+# PHASE 7 — jalr call/return (use only a0/a1 for temps)
+
+0:  000005b7    lui  x11 0x0
+4:  08058593    addi x11 x11 128     # a1 = 0x80
+8:  000580e7    jalr x1  x11 0       # call func@0x80
+
+c:  00008067    jalr x0  x1  0       # return / stop style
+
+00000080 <func0>:
+80: 02a00513    addi x10 x0  42      # a0 = 42
+84: 06300593    addi x11 x0  99      # a1 = 99
+88: 00008067    jalr x0  x1  0       # return
+
+#end
+
+# (Values are in signed decimal)
+# a0 = 42
+# a1 = 99

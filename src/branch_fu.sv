@@ -1,142 +1,143 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: branch_fu
-// Description: Branch and jump functional unit. Evaluates branch conditions,
-//              computes targets, optionally writes link registers (for JAL/
-//              JALR-style ops), and produces ROB completion plus redirect
-//              signals for later use (Phase 4).
+// Description: Branch functional unit (Phase 4).
+//   - Always predict not-taken.
+//   - If actual outcome is taken => mispredict_o=1 and target_pc_o is provided.
+//   - Still produces a wb_pkt for ROB done and optional PRF writeback (JAL/JALR link).
 // Additional Comments:
-//   - Uses issue_pkt_t fields: pc, alu_op, imm, imm_used, is_branch,
-//     is_jump, rs1_tag, rs2_tag, rd_used, rd_tag, rob_tag.
-//   - Branch condition encoding via alu_op is assumed; adjust mapping to
-//     match your decode (e.g. BEQ/BNE/BLT/BGE).
-//
+//   - Added flush_i: clears any in-flight output when asserted.
+//   - FIX: also latches the *recover_tag_o* aligned with mispredict_o, so recovery_ctrl
+//          does not depend on wb_bru.rob_tag timing/arb alignment.
 //////////////////////////////////////////////////////////////////////////////////
 
 `timescale 1ns/1ps
-
 `include "ooop_defs.vh"
 `include "ooop_types.sv"
 
-module branch_fu #(
-  parameter int XLEN_P = XLEN
-)(
+module branch_fu (
   input  logic                 clk,
   input  logic                 rst_n,
   input  logic                 flush_i,
 
-  // From BRU reservation station
   input  logic                 issue_valid_i,
-  output logic                 issue_ready_o,
-  input  issue_pkt_t           issue_pkt_i,
+  input  ooop_types::rs_entry_t entry_i,
+  input  ooop_types::xlen_t     src1_i,
+  input  ooop_types::xlen_t     src2_i,
 
-  // PRF read ports
-  output logic [PREG_W-1:0]    prf_rs1_tag_o,
-  output logic [PREG_W-1:0]    prf_rs2_tag_o,
-  input  logic [XLEN_P-1:0]    prf_rs1_data_i,
-  input  logic [XLEN_P-1:0]    prf_rs2_data_i,
+  output logic                 mispredict_o,
+  output logic [31:0]          target_pc_o,
 
-  // Writeback to CDB / PRF (e.g. link register for jumps)
-  output logic                 wb_valid_o,
-  output logic [PREG_W-1:0]    wb_tag_o,
-  output logic [XLEN_P-1:0]    wb_data_o,
+  // FIX: explicit tag aligned with mispredict_o
+  output logic [ooop_types::ROB_W-1:0] recover_tag_o,
 
-  // Completion to ROB
-  output logic                 cpl_valid_o,
-  output logic [ROB_TAG_W-1:0] cpl_tag_o,
-
-  // Redirect info for Phase 4 (can be ignored for now)
-  output logic                 br_redir_valid_o,
-  output logic [XLEN_P-1:0]    br_redir_pc_o,
-  output logic                 br_taken_o
+  output ooop_types::wb_pkt_t   wb_o
 );
 
-  // ---------------------------------------------------------------------------
-  // PRF tags
-  // ---------------------------------------------------------------------------
-  assign prf_rs1_tag_o = issue_pkt_i.rs1_tag;
-  assign prf_rs2_tag_o = issue_pkt_i.rs2_tag;
+  import ooop_types::*;
 
-  // ---------------------------------------------------------------------------
-  // Simple 1-op pipeline (similar to ALU)
-  // ---------------------------------------------------------------------------
-  logic        busy_q;
-  issue_pkt_t  pkt_q;
-  logic [XLEN_P-1:0] rs1_q;
-  logic [XLEN_P-1:0] rs2_q;
+  // decode bits
+  logic [6:0] opcode;
+  logic [2:0] funct3;
 
-  assign issue_ready_o = !busy_q;
+  always @* begin
+    opcode = entry_i.instr[6:0];
+    funct3 = entry_i.instr[14:12];
+  end
 
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      busy_q <= 1'b0;
-      pkt_q  <= '0;
-      rs1_q  <= '0;
-      rs2_q  <= '0;
-    end else if (flush_i) begin
-      busy_q <= 1'b0;
-      pkt_q  <= '0;
-    end else begin
-      if (issue_valid_i && issue_ready_o) begin
-        busy_q <= 1'b1;
-        pkt_q  <= issue_pkt_i;
-        rs1_q  <= prf_rs1_data_i;
-        rs2_q  <= prf_rs2_data_i;
-      end else if (busy_q) begin
-        busy_q <= 1'b0;
+  // actual taken?
+  logic actual_taken;
+  logic [31:0] target_pc;
+
+  always @* begin
+    actual_taken = 1'b0;
+    target_pc    = entry_i.pc + entry_i.imm;
+
+    if (issue_valid_i && entry_i.valid) begin
+      // jumps always taken
+      if (entry_i.is_jump || (opcode == 7'b1101111) || (opcode == 7'b1100111)) begin
+        actual_taken = 1'b1;
+        if (entry_i.is_jalr) begin // handle JALR specifc
+          // JALR target = (rs1 + imm) & ~1
+          target_pc = (src1_i + entry_i.imm) & 32'hFFFF_FFFE;
+        end else begin
+          // JAL uses pc+imm
+          target_pc = entry_i.pc + entry_i.imm;
+        end
+      end else if (entry_i.is_branch || (opcode == 7'b1100011)) begin
+        // branch: decide by funct3
+        unique case (funct3)
+          3'b000: actual_taken = (src1_i == src2_i);                  // beq
+          3'b001: actual_taken = (src1_i != src2_i);                  // bne
+          3'b100: actual_taken = ($signed(src1_i) < $signed(src2_i)); // blt
+          3'b101: actual_taken = ($signed(src1_i) >= $signed(src2_i));// bge
+          3'b110: actual_taken = (src1_i < src2_i);                   // bltu
+          3'b111: actual_taken = (src1_i >= src2_i);                  // bgeu
+          default: actual_taken = 1'b0;
+        endcase
+        target_pc = entry_i.pc + entry_i.imm;
       end
     end
   end
 
-  // ---------------------------------------------------------------------------
-  // Branch decision + target computation
-  // ---------------------------------------------------------------------------
-  logic                 take_branch_d;
-  logic [XLEN_P-1:0]    target_d;
-  logic [XLEN_P-1:0]    link_val_d;
+  // always predict not taken => mispredict if actually taken
+  logic mp_n, mp_q;
+  logic [31:0] tgt_n, tgt_q;
 
-  always_comb begin
-    take_branch_d = 1'b0;
-    target_d      = pkt_q.pc + pkt_q.imm;
-    link_val_d    = pkt_q.pc + XLEN_P'(32'd4); // default link = pc+4
+  // FIX: latch the tag that caused the mispredict, aligned with mp/tgt
+  logic [ROB_W-1:0] rtag_n, rtag_q;
 
-    if (pkt_q.is_jump) begin
-      // JAL / JALR style: always taken
-      take_branch_d = 1'b1;
-      if (pkt_q.imm_used) begin
-        // Approximate JALR: rs1 + imm
-        target_d = rs1_q + pkt_q.imm;
+  wb_pkt_t wb_n, wb_q;
+
+  always @* begin
+    wb_n   = '0;
+    mp_n   = 1'b0;
+    tgt_n  = 32'd0;
+    rtag_n = '0;
+
+    if (issue_valid_i && entry_i.valid) begin
+      // mark done in ROB
+      wb_n.valid    = 1'b1;
+      wb_n.rob_tag  = entry_i.rob_tag;
+      wb_n.rd_used  = entry_i.rd_used;
+      wb_n.prd      = entry_i.rd_used ? entry_i.prd : '0;
+
+      // link for jal/jalr
+      if ((entry_i.is_jump || (opcode == 7'b1101111) || (opcode == 7'b1100111)) && entry_i.rd_used) begin
+        wb_n.data = entry_i.pc + 32'd4;
       end else begin
-        // JAL: pc + imm
-        target_d = pkt_q.pc + pkt_q.imm;
+        wb_n.data = 32'd0;
       end
-    end else if (pkt_q.is_branch) begin
-      // Conditional branches: use alu_op encoding for condition
-      unique case (pkt_q.alu_op)
-        4'd0: take_branch_d = (rs1_q == rs2_q);                         // BEQ
-        4'd1: take_branch_d = (rs1_q != rs2_q);                         // BNE
-        4'd2: take_branch_d = ($signed(rs1_q) <  $signed(rs2_q));       // BLT
-        4'd3: take_branch_d = ($signed(rs1_q) >= $signed(rs2_q));       // BGE
-        4'd4: take_branch_d = (rs1_q <  rs2_q);                         // BLTU
-        4'd5: take_branch_d = (rs1_q >= rs2_q);                         // BGEU
-        default: take_branch_d = 1'b0;
-      endcase
-      target_d = pkt_q.pc + pkt_q.imm;
+
+      if (actual_taken) begin
+        mp_n   = 1'b1;
+        tgt_n  = target_pc;
+        rtag_n = entry_i.rob_tag; // tag of the branch/jump being resolved
+      end
     end
   end
 
-  // ---------------------------------------------------------------------------
-  // Writeback, completion, redirect
-  // ---------------------------------------------------------------------------
-  // Link register write (for jumps) iff rd_used is set.
-  assign wb_valid_o  = busy_q && pkt_q.rd_used && pkt_q.is_jump;
-  assign wb_tag_o    = pkt_q.rd_tag;
-  assign wb_data_o   = link_val_d;
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      wb_q   <= '0;
+      mp_q   <= 1'b0;
+      tgt_q  <= 32'd0;
+      rtag_q <= '0;
+    end else if (flush_i) begin
+      wb_q   <= '0;
+      mp_q   <= 1'b0;
+      tgt_q  <= 32'd0;
+      rtag_q <= '0;
+    end else begin
+      wb_q   <= wb_n;
+      mp_q   <= mp_n;
+      tgt_q  <= tgt_n;
+      rtag_q <= rtag_n;
+    end
+  end
 
-  assign cpl_valid_o = busy_q;
-  assign cpl_tag_o   = pkt_q.rob_tag;
-
-  assign br_taken_o        = busy_q && take_branch_d;
-  assign br_redir_valid_o  = busy_q && take_branch_d;
-  assign br_redir_pc_o     = target_d;
+  assign wb_o          = wb_q;
+  assign mispredict_o  = mp_q;
+  assign target_pc_o   = tgt_q;
+  assign recover_tag_o = rtag_q;
 
 endmodule

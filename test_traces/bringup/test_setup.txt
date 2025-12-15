@@ -1,0 +1,16 @@
+# PHASE 0 — setup only
+
+0:  00010437    lui  x8  0x10
+4:  04040413    addi x8  x8  64
+
+8:  000204b7    lui  x9  0x20
+c:  fe048493    addi x9  x9  -32
+
+10: 00040513    addi x10 x8  0      # a0 = x8
+14: 00048593    addi x11 x9  0      # a1 = x9
+
+#end
+
+# (Values are in signed decimal)
+# a0 = 65600
+# a1 = 131040

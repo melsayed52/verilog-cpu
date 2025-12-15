@@ -1,0 +1,20 @@
+# PHASE 4 — RAW hazards
+
+0:  00010437    lui  x8  0x10
+4:  04040413    addi x8  x8  64
+
+8:  00500293    addi x5  x0  5
+c:  00600313    addi x6  x0  6
+10: 0062f3b3    and  x7  x5  x6      # x7 = 4
+14: 00138393    addi x7  x7  1       # x7 = 5
+18: 00742623    sw   x7  12 x8
+1c: 00c42b83    lw   x23 12 x8       # x23 = 5
+
+20: 000b8513    addi x10 x23 0      # a0 = x23
+24: 00038593    addi x11 x7  0      # a1 = x7
+
+#end
+
+# (Values are in signed decimal)
+# a0 = 5
+# a1 = 5

@@ -1,0 +1,19 @@
+# SIMPLE ORI TEST
+# Covers:
+#   - ori with non-zero rs1 (build constant)
+#   - ori with x0 as rs1 (pure immediate)
+# a0 = x10, a1 = x11
+
+0:   123452b7    lui  x5  0x12345       # x5 = 0x12345000
+4:   6782e293    ori  x5  x5  1656      # x5 = 0x12345678
+
+8:   12306293    ori  x5  x0  291       # x5 = 291 (tests ori with x0)
+
+c:   00028513    addi x10 x5  0         # a0 = x5
+10:  00030593    addi x11 x6  0         # a1 = x6 (should still be 0 if regs reset to 0)
+
+#end
+
+# (Values are in signed decimal)
+# a0 = 291
+# a1 = 0

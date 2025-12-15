@@ -1,0 +1,21 @@
+# PHASE 2 — load/store word
+
+0:  00010437    lui  x8  0x10
+4:  04040413    addi x8  x8  64
+
+8:  00500293    addi x5  x0  5
+c:  00600313    addi x6  x0  6
+
+10: 00542023    sw   x5  0  x8
+14: 00642223    sw   x6  4  x8
+18: 00042e83    lw   x29 0  x8
+1c: 00442f03    lw   x30 4  x8
+
+20: 000e8513    addi x10 x29 0      # a0 = x29
+24: 000f0593    addi x11 x30 0      # a1 = x30
+
+#end
+
+# (Values are in signed decimal)
+# a0 = 5
+# a1 = 6

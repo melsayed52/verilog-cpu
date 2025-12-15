@@ -1,0 +1,26 @@
+# SIMPLE ORI TEST (with negative immediate)
+# Tests:
+#   - ori with positive immediate
+#   - ori with negative immediate (sign-extended 12-bit)
+# a0 = x10, a1 = x11
+
+# x5 = 0x12345678
+0:   123452b7    lui  x5  0x12345
+4:   6782e293    ori  x5  x5  1656
+
+# x6 = -1 (0xFFFFFFFF)
+# imm = -1 => 12-bit immediate = 0xFFF
+8:   fff06313    ori  x6  x0  -1
+
+# x7 = x5 | (-1) => all 1s
+c:   fff2e393    ori  x7  x5  -1
+
+# export results
+10:  00038513    addi x10 x7  0        # a0 = x7
+14:  00030593    addi x11 x6  0        # a1 = x6
+
+#end
+
+# (Values are in signed decimal)
+# a0 = -1
+# a1 = -1

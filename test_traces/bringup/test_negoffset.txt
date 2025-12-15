@@ -1,0 +1,18 @@
+# PHASE 6 — negative offsets
+
+0:  00010437    lui  x8  0x10
+4:  04040413    addi x8  x8  64
+
+8:  02040913    addi x18 x8  32      # x18 = x8 + 32
+c:  00a00293    addi x5  x0  10
+10: ffe91f23    sh   x5  2 x18
+14: ffe94f83    lbu  x31 2 x18
+
+18: 000f8513    addi x10 x31 0      # a0 = x31
+1c: 00028593    addi x11 x5  0      # a1 = x5
+
+#end
+
+# (Values are in signed decimal)
+# a0 = 10
+# a1 = 10

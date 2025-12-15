@@ -1,0 +1,17 @@
+# PHASE 3 — byte & halfword
+
+0:  00010437    lui  x8  0x10
+4:  04040413    addi x8  x8  64
+
+8:  00f00393    addi x7  x0  15
+c:  00741423    sh   x7  8  x8
+10: 00844f83    lbu  x31 8  x8
+
+14: 000f8513    addi x10 x31 0      # a0 = x31
+18: 00038593    addi x11 x7  0      # a1 = x7
+
+#end
+
+# (Values are in signed decimal)
+# a0 = 15
+# a1 = 15
