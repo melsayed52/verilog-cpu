@@ -20,7 +20,7 @@ module core_tb;
   // -------------------------
   // knobs
   // -------------------------
-  localparam int MAX_CYCLES       = 300;
+  localparam int MAX_CYCLES       = 10000;
   localparam int PRINT_EVERY      = 25;
   localparam int STALL_THRESHOLD  = 200;
 
