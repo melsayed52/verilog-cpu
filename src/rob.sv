@@ -242,10 +242,12 @@ module rob #(
       // count update: based on SAME-CYCLE commit_fire/alloc_fire and recover_i
       if (recover_i) begin
         // During recovery, count is determined by checkpoint count and commit
+        // Bug fix: count must be calculated from current head and restored tail
+        // new_count = (ckpt_tail - new_head) wher new_head = head + commit_fire
         if (commit_fire) begin
-          count <= ckpt_ptrs[recover_tag_i].count - 1'b1;
+          count <= (ckpt_ptrs[recover_tag_i].tail - head - 1'b1);
         end else begin
-          count <= ckpt_ptrs[recover_tag_i].count;
+          count <= (ckpt_ptrs[recover_tag_i].tail - head);
         end
       end else begin
         unique case ({alloc_fire, commit_fire})

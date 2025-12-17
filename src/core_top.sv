@@ -47,11 +47,44 @@ module core_top (
     .rvalid (ic_rvalid)
   );
 
+  // -------------------------
+  // BTB (Branch Target Buffer)
+  // -------------------------
+  logic [31:0] btb_lookup_pc;
+  logic        btb_lookup_hit;
+  logic        btb_lookup_taken;
+  logic [31:0] btb_lookup_target;
+
+  logic        btb_update_valid;
+  logic [31:0] btb_update_pc;
+  logic [31:0] btb_update_target;
+  logic        btb_update_taken;
+  logic        btb_update_is_branch;
+
+  btb #(.ENTRIES(8)) btb_u (
+    .clk               (clk),
+    .rst_n             (rst_n),
+    .flush_i           (flush_i),
+
+    .lookup_pc_i       (btb_lookup_pc),
+    .lookup_hit_o      (btb_lookup_hit),
+    .lookup_taken_o    (btb_lookup_taken),
+    .lookup_target_o   (btb_lookup_target),
+
+    .update_valid_i    (btb_update_valid),
+    .update_pc_i       (btb_update_pc),
+    .update_target_i   (btb_update_target),
+    .update_taken_i    (btb_update_taken),
+    .update_is_branch_i(btb_update_is_branch)
+  );
+
   // Fetch outputs (pre-skid)
   logic        f_valid_raw;
   logic        f_ready_raw;
   logic [31:0] f_pc_raw;
   logic [31:0] f_instr_raw;
+  logic        f_pred_taken_raw;
+  logic [31:0] f_pred_target_raw;
 
   fetch fetch_u (
     .clk             (clk),
@@ -63,22 +96,29 @@ module core_top (
     .valid_out       (f_valid_raw),
     .pc_out          (f_pc_raw),
     .instr_out       (f_instr_raw),
+    .predicted_taken_out (f_pred_taken_raw),
+    .predicted_target_out(f_pred_target_raw),
 
     .icache_en_o     (ic_en),
     .icache_addr_o   (ic_addr),
     .icache_rdata_i  (ic_rdata),
-    .icache_rvalid_i (ic_rvalid)
+    .icache_rvalid_i (ic_rvalid),
+
+    .btb_lookup_pc_o    (btb_lookup_pc),
+    .btb_lookup_hit_i   (btb_lookup_hit),
+    .btb_lookup_taken_i (btb_lookup_taken),
+    .btb_lookup_target_i(btb_lookup_target)
   );
 
   // -------------------------
   // Skid: Fetch -> Decode
   // -------------------------
-  localparam int F2D_W = 64;
+  localparam int F2D_W = 64 + 1 + 32;  // pc + instr + pred_taken + pred_target
 
   logic [F2D_W-1:0] f2d_in_data, f2d_out_data;
   logic             f2d_valid, f2d_ready;
 
-  assign f2d_in_data = {f_pc_raw, f_instr_raw};
+  assign f2d_in_data = {f_pc_raw, f_instr_raw, f_pred_taken_raw, f_pred_target_raw};
 
   skidbuffer #(.WIDTH(F2D_W)) skid_f2d_u (
     .clk       (clk),
@@ -96,7 +136,9 @@ module core_top (
 
   logic [31:0] f_pc;
   logic [31:0] f_instr;
-  assign {f_pc, f_instr} = f2d_out_data;
+  logic        f_pred_taken;
+  logic [31:0] f_pred_target;
+  assign {f_pc, f_instr, f_pred_taken, f_pred_target} = f2d_out_data;
 
   // -------------------------
   // Decode -> (skid) -> Rename
@@ -112,6 +154,8 @@ module core_top (
 
     .pc_in     (f_pc),
     .instr_in  (f_instr),
+    .predicted_taken_in (f_pred_taken),
+    .predicted_target_in(f_pred_target),
 
     .valid_out (d_valid_raw),
     .pkt_out   (d_pkt_raw)
@@ -466,6 +510,14 @@ module core_top (
     .target_pc_o    (bru_target_pc),
 
     .recover_tag_o  (bru_recover_tag),
+
+    // BTB update interface
+    .btb_update_valid_o    (btb_update_valid),
+    .btb_update_pc_o       (btb_update_pc),
+    .btb_update_target_o   (btb_update_target),
+    .btb_update_taken_o    (btb_update_taken),
+    .btb_update_is_branch_o(btb_update_is_branch),
+
     .wb_o           (wb_bru)
   );
 

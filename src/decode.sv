@@ -17,6 +17,8 @@ module decode (
 
   input  logic [31:0] pc_in,
   input  logic [31:0] instr_in,
+  input  logic        predicted_taken_in,
+  input  logic [31:0] predicted_target_in,
 
   output logic        valid_out,
   output ooop_types::decode_pkt_t pkt_out
@@ -73,6 +75,9 @@ module decode (
     pkt_out.is_branch = 1'b0;
     pkt_out.is_jump   = 1'b0;
     pkt_out.is_jalr   = 1'b0;
+    pkt_out.funct3    = funct3;  // pass funct3 for branch/load/store decoding
+    pkt_out.predicted_taken  = predicted_taken_in;
+    pkt_out.predicted_target = predicted_target_in;
 
     unique case (opcode)
 

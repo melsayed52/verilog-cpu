@@ -86,6 +86,7 @@ module dispatch (
   end
 
   // dispatch fires only when fifo valid, ROB ready, and target RS has space
+  // BUG 6 FIX: Do NOT dispatch during flush (which happens during recovery)
   wire fire = f_out_valid && rob_ready_i && rs_space_ok && !flush_i;
   assign f_out_ready = fire;
 
@@ -117,7 +118,10 @@ module dispatch (
     entry.is_branch     = f_out_pkt.is_branch;
     entry.is_jump       = f_out_pkt.is_jump;
     entry.is_jalr       = f_out_pkt.is_jalr;
-    
+    entry.funct3        = f_out_pkt.funct3;
+    entry.predicted_taken  = f_out_pkt.predicted_taken;
+    entry.predicted_target = f_out_pkt.predicted_target;
+
     entry.rs1_used      = f_out_pkt.rs1_used;
     entry.rs2_used      = f_out_pkt.rs2_used;
 

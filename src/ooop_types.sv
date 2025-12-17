@@ -62,6 +62,8 @@ package ooop_types;
     logic         valid;
     xlen_t        pc;
     logic [31:0]  instr;
+    logic         predicted_taken;   // BTB prediction
+    xlen_t        predicted_target;  // BTB predicted target
   } fetch_pkt_t;
 
   typedef struct packed {
@@ -93,6 +95,9 @@ package ooop_types;
     logic         is_branch;
     logic         is_jump;
     logic         is_jalr;
+    logic [2:0]   funct3;    // for branch condition and load/store size
+    logic         predicted_taken;   // BTB prediction from fetch
+    xlen_t        predicted_target;  // BTB predicted target from fetch
   } decode_pkt_t;
 
   typedef struct packed {
@@ -120,7 +125,10 @@ package ooop_types;
     logic         is_branch;
     logic         is_jump;
     logic         is_jalr;
-    
+    logic [2:0]   funct3;    // for branch condition and load/store size
+    logic         predicted_taken;   // BTB prediction from fetch
+    xlen_t        predicted_target;  // BTB predicted target from fetch
+
     logic         rs1_used;
     logic         rs2_used;
 
@@ -157,7 +165,9 @@ package ooop_types;
     logic         is_branch;
     logic         is_jump;
     logic         is_jalr;
-    
+    logic [2:0]   funct3;    // for branch condition and load/store size
+    logic         predicted_taken;   // BTB prediction from fetch
+    xlen_t        predicted_target;  // BTB predicted target from fetch
     logic         rs1_used;
     logic         rs2_used;
 
