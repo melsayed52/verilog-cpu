@@ -43,5 +43,7 @@ Rename (RAT + free list), PRF, dispatch routing, ROB allocation/commit plumbing,
 ### Phase 3 — Execute + writeback + commit (full pipeline)
 ALU/BRU/LSU functional units, CDB arbitration, PRF writeback, RS wakeup, ROB completion, and in-order commit/free.
 
-### Phase 4 — Recovery (attempted; currently nonfunctional)
-Goal: recover from branch mispredictions (baseline predictor: “not-taken”), flush/squash younger work, and resume at the correct target.
+### Phase 4 — Recovery + branch prediction (complete)
+Recovery logic to flush mispredicted instructions, restore pipeline state, and resume execution at the correct target PC. 
+
+Bonus implemented: Fetch-stage dynamic branch prediction using an 8-entry fully associative BTB with a 2-bit bimodal BHT.
