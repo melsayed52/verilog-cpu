@@ -11,8 +11,11 @@
 `include "ooop_types.sv"
 
 module core_top (
-  input  logic clk,
-  input  logic rst_n
+  input  logic        clk,
+  input  logic        rst_n,
+  // debug outputs (added so synthesis cannot optimize the core away)
+  output logic        dbg_commit,
+  output logic [31:0] dbg_wb_data
 );
 
   import ooop_types::*;
@@ -621,5 +624,9 @@ module core_top (
     end
   end
 `endif
+
+  // drive debug outputs from internal commit/writeback activity
+  assign dbg_commit  = rob_commit;
+  assign dbg_wb_data = wb_alu.data ^ wb_lsu.data ^ wb_bru.data;
 
 endmodule

@@ -157,12 +157,12 @@ module rob #(
         idx       = ckpt_tail;
 
         // invalidate younger-than-checkpoint entries: [ckpt_tail .. tail)
-        for (j = 0; j < DEPTH; j++) begin
-          if (idx == tail) begin
-            j = DEPTH;
-          end else begin
-            entries[idx] <= '0;
-            idx = idx + 1'b1;
+        // Synthesis-friendly: fixed DEPTH iterations, no early exit.
+        // Entry k is younger iff its circular offset from ckpt_tail is
+        // smaller than the circular distance from ckpt_tail to tail.
+        for (int k = 0; k < DEPTH; k++) begin
+          if (ROB_W'(ROB_W'(k) - ckpt_tail) < ROB_W'(tail - ckpt_tail)) begin
+            entries[k] <= '0;
           end
         end
 
@@ -245,9 +245,9 @@ module rob #(
         // Bug fix: count must be calculated from current head and restored tail
         // new_count = (ckpt_tail - new_head) wher new_head = head + commit_fire
         if (commit_fire) begin
-          count <= (ckpt_ptrs[recover_tag_i].tail - head - 1'b1);
+          count <= {1'b0, ROB_W'(ckpt_ptrs[recover_tag_i].tail - head - 1'b1)};
         end else begin
-          count <= (ckpt_ptrs[recover_tag_i].tail - head);
+          count <= {1'b0, ROB_W'(ckpt_ptrs[recover_tag_i].tail - head)};
         end
       end else begin
         unique case ({alloc_fire, commit_fire})

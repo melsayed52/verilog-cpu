@@ -1,14 +1,12 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: dmem_bram
-// Description: Simple BRAM-backed data memory model with fixed 2-cycle latency.
-//              - request accepted on en_i
-//              - response valid asserted 2 cycles later (for both loads/stores)
-//              - stores update memory on accept
-// Additional Comments:
-//   - byte addressing; internal storage is word array.
-//   - phase 3: extra cycle to mimic memory latency.
+// Description: Data memory, 2-cycle load latency (same interface/behavior as before).
+// Synthesis notes (rewritten so Vivado infers a block RAM instead of flip-flops):
+//   - No reset on the memory array (a BRAM cannot clear all words in one cycle).
+//     Contents start at zero via the initial block (honored for BRAM init + sim).
+//   - Sub-word stores use per-byte write enables instead of read-modify-write.
+//   - Read data is registered straight out of the array (BRAM output register).
 //////////////////////////////////////////////////////////////////////////////////
-
 `timescale 1ns/1ps
 `include "ooop_defs.vh"
 `include "ooop_types.sv"
@@ -18,95 +16,75 @@ module dmem_bram #(
 )(
   input  logic                 clk,
   input  logic                 rst_n,
-
-  // request (BRAM-style)
   input  logic                 en_i,
   input  logic                 we_i,
   input  logic [31:0]          addr_i,
   input  logic [31:0]          wdata_i,
   input  ooop_types::ls_size_t size_i,
-
-  // response (2 cycles after en_i)
   output logic                 rvalid_o,
   output logic [31:0]          rdata_o
 );
-
   import ooop_types::*;
 
-  logic [31:0] mem [0:DEPTH_WORDS-1];
+  localparam int AW = $clog2(DEPTH_WORDS);
 
-  // pipeline regs for returning data 2 cycles later
-  logic        v1_q, v2_q;
-  logic [31:0] rdata1_q, rdata2_q;
+  (* ram_style = "block" *) logic [31:0] mem [0:DEPTH_WORDS-1];
 
-  // derived word index
-  logic [$clog2(DEPTH_WORDS)-1:0] word_idx;
-  assign word_idx = addr_i[2 +: $clog2(DEPTH_WORDS)];
+  initial begin
+    for (int n = 0; n < DEPTH_WORDS; n++) mem[n] = 32'd0;
+  end
 
-  // store mask helper (writes into selected bytes/half/word)
-  function automatic [31:0] write_merge(
-    input [31:0] old_word,
-    input [31:0] new_word,
-    input ls_size_t sz,
-    input [1:0]  off
-  );
-    logic [31:0] m;
-    begin
-      m = old_word;
+  logic [AW-1:0] word_idx;
+  assign word_idx = addr_i[2 +: AW];
 
-      unique case (sz)
-        LS_B: begin
-          unique case (off)
-            2'd0: m[7:0]   = new_word[7:0];
-            2'd1: m[15:8]  = new_word[7:0];
-            2'd2: m[23:16] = new_word[7:0];
-            default: m[31:24] = new_word[7:0];
-          endcase
+  // byte enables + write data replicated into the right byte lanes
+  logic [3:0]  be;
+  logic [31:0] wdata_lane;
+  always_comb begin
+    unique case (size_i)
+      LS_B: begin
+        be         = 4'b0001 << addr_i[1:0];
+        wdata_lane = {4{wdata_i[7:0]}};
+      end
+      LS_H: begin
+        be         = addr_i[1] ? 4'b1100 : 4'b0011;
+        wdata_lane = {2{wdata_i[15:0]}};
+      end
+      default: begin
+        be         = 4'b1111;
+        wdata_lane = wdata_i;
+      end
+    endcase
+  end
+
+  // ---- BRAM port: byte-write, read-first, no reset on the array ----
+  logic [31:0] ram_q;
+  always_ff @(posedge clk) begin
+    if (en_i) begin
+      if (we_i) begin
+        for (int b = 0; b < 4; b++) begin
+          if (be[b]) mem[word_idx][8*b +: 8] <= wdata_lane[8*b +: 8];
         end
-
-        LS_H: begin
-          if (off[1]) m[31:16] = new_word[15:0];
-          else        m[15:0]  = new_word[15:0];
-        end
-
-        default: begin
-          m = new_word;
-        end
-      endcase
-
-      write_merge = m;
+      end
+      ram_q <= mem[word_idx];
     end
-  endfunction
+  end
 
-  integer i;
-
+  // ---- control pipeline (matches the original 2-cycle behavior) ----
+  // original: stage-1 data was 0 on a write, mem[addr] on a read, and held when en_i=0
+  logic v1_q, v2_q, wr_q;
+  logic [31:0] rdata2_q;
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       v1_q     <= 1'b0;
       v2_q     <= 1'b0;
-      rdata1_q <= 32'd0;
+      wr_q     <= 1'b1;   // stage-1 data reads as 0 right after reset (as before)
       rdata2_q <= 32'd0;
-
-      // optional init
-      for (i = 0; i < DEPTH_WORDS; i = i + 1) begin
-        mem[i] <= 32'd0;
-      end
     end else begin
-      // stage 0 accept
       v1_q <= en_i;
-
-      if (en_i) begin
-        if (we_i) begin
-          mem[word_idx] <= write_merge(mem[word_idx], wdata_i, size_i, addr_i[1:0]);
-          rdata1_q      <= 32'd0;
-        end else begin
-          rdata1_q      <= mem[word_idx];
-        end
-      end
-
-      // stage 1 -> stage 2
+      if (en_i) wr_q <= we_i;
       v2_q     <= v1_q;
-      rdata2_q <= rdata1_q;
+      rdata2_q <= wr_q ? 32'd0 : ram_q;
     end
   end
 

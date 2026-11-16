@@ -46,6 +46,7 @@ module icache #(
   // ------------------------------------------------------------
   // Helpers: ignore blank/comment-only lines
   // ------------------------------------------------------------
+`ifndef SYNTHESIS  // simulation-only text-file loader
   function automatic bit is_ignorable_line(input string s);
     string t;
     int k;
@@ -277,6 +278,10 @@ module icache #(
     // If your sim is silently not loading, this line will now make it obvious.
     load_program_auto(PROGRAM_TXT);
   end
+`else
+  // synthesis: initialize the instruction ROM from a hex file (one 32-bit word per line)
+  initial $readmemh("program.hex", mem);
+`endif
 
   // full index (do not truncate high bits before bounds check)
   logic [31:0] word_idx_full;

@@ -99,19 +99,19 @@ module rs #(
 
     free_found = |free_mask;
     free_idx   = '0;
-    for (int idx = 0; idx < DEPTH; idx = idx + 1) begin
+    // lowest free index wins (scan downward, no break: synthesis-friendly)
+    for (int idx = DEPTH-1; idx >= 0; idx = idx - 1) begin
       if (free_mask[idx]) begin
         free_idx = idx[IDX_W-1:0];
-        break;
       end
     end
 
     pick_found = |ready_mask;
     pick_idx   = '0;
-    for (int idx = 0; idx < DEPTH; idx = idx + 1) begin
+    // lowest ready index wins (scan downward, no break: synthesis-friendly)
+    for (int idx = DEPTH-1; idx >= 0; idx = idx - 1) begin
       if (ready_mask[idx]) begin
         pick_idx = idx[IDX_W-1:0];
-        break;
       end
     end
 
